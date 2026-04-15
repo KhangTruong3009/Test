@@ -1,14 +1,15 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
 
-const char* ssid = "VGU_Student_Guest";      
-const char* password = "";      
+const char* ssid = "YOUR_WIFI_NAME";       
+const char* password = "YOUR_WIFI_PASSWORD";      
 
 const char* mqtt_server = "broker.hivemq.com";
 const int mqtt_port = 1883;
 
 const char* topic_moisture = "myfarm/sensor/moisture";
 const char* topic_pump_status = "myfarm/pump/status";
+const char* topic_pump_command = "myfarm/pump/command"; 
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -16,6 +17,8 @@ PubSubClient client(espClient);
 const int sensorPin = 3;  
 const int relayPin = 4;   
 const int dryThreshold = 2500; 
+
+String systemMode = "AUTO"; 
 
 void setup_wifi() {
   delay(10);
@@ -31,6 +34,35 @@ void setup_wifi() {
   Serial.println("\nWiFi connected!");
 }
 
+void callback(char* topic, byte* payload, unsigned int length) {
+  String message = "";
+  for (int i = 0; i < length; i++) {
+    message += (char)payload[i];
+  }
+  
+  Serial.print("Command received: ");
+  Serial.println(message);
+
+   if (String(topic) == topic_pump_command) {
+    if (message == "ON") {
+      systemMode = "MANUAL";
+      digitalWrite(relayPin, LOW); 
+      client.publish(topic_pump_status, "ON (MANUAL)");
+      Serial.println("-> MODE: MANUAL | PUMP FORCED ON");
+      
+    } else if (message == "OFF") {
+      systemMode = "MANUAL";
+      digitalWrite(relayPin, HIGH); // Turn Pump OFF
+      client.publish(topic_pump_status, "OFF (MANUAL)");
+      Serial.println("-> MODE: MANUAL | PUMP FORCED OFF");
+      
+    } else if (message == "AUTO") {
+      systemMode = "AUTO";
+      Serial.println("-> MODE: AUTO | SENSOR TAKES CONTROL");
+    }
+  }
+}
+
 void reconnect() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
@@ -38,6 +70,9 @@ void reconnect() {
     
     if (client.connect(clientId.c_str())) {
       Serial.println("connected to MQTT Broker!");
+      
+      client.subscribe(topic_pump_command); 
+      
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -56,6 +91,7 @@ void setup() {
   setup_wifi(); 
   
   client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(callback); 
   
   Serial.println("--- IOT SYSTEM READY ---");
 }
@@ -67,24 +103,18 @@ void loop() {
   client.loop(); 
 
   int moistureValue = analogRead(sensorPin);
-  Serial.print("Moisture Level: ");
-  Serial.println(moistureValue);
-
   char moistureString[8];
   dtostrf(moistureValue, 1, 2, moistureString);
   client.publish(topic_moisture, moistureString); 
 
-  if (moistureValue < dryThreshold) {
-    digitalWrite(relayPin, LOW);  
-    Serial.println("-> SOIL IS WET: PUMP [OFF]");
-    
-    client.publish(topic_pump_status, "OFF"); 
-    
-  } else {
-    digitalWrite(relayPin, HIGH); 
-    Serial.println("-> SOIL IS DRY: PUMP [ON]");
-    
-    client.publish(topic_pump_status, "ON");
+  if (systemMode == "AUTO") {
+    if (moistureValue < dryThreshold) {
+      digitalWrite(relayPin, HIGH);  
+      client.publish(topic_pump_status, "OFF (AUTO)"); 
+    } else {
+      digitalWrite(relayPin, LOW);   
+      client.publish(topic_pump_status, "ON (AUTO)");
+    }
   }
   
   delay(1000); 
