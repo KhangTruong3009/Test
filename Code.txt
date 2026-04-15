@@ -1,0 +1,91 @@
+#include <WiFi.h>
+#include <PubSubClient.h>
+
+const char* ssid = "VGU_Student_Guest";      
+const char* password = "";      
+
+const char* mqtt_server = "broker.hivemq.com";
+const int mqtt_port = 1883;
+
+const char* topic_moisture = "myfarm/sensor/moisture";
+const char* topic_pump_status = "myfarm/pump/status";
+
+WiFiClient espClient;
+PubSubClient client(espClient);
+
+const int sensorPin = 3;  
+const int relayPin = 4;   
+const int dryThreshold = 2500; 
+
+void setup_wifi() {
+  delay(10);
+  Serial.println();
+  Serial.print("Connecting to WiFi: ");
+  Serial.println(ssid);
+  WiFi.begin(ssid, password);
+
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWiFi connected!");
+}
+
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Attempting MQTT connection...");
+    String clientId = "ESP32Client-" + String(random(0, 0xffff), HEX);
+    
+    if (client.connect(clientId.c_str())) {
+      Serial.println("connected to MQTT Broker!");
+    } else {
+      Serial.print("failed, rc=");
+      Serial.print(client.state());
+      Serial.println(" try again in 5 seconds");
+      delay(5000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  
+  pinMode(relayPin, OUTPUT);
+  digitalWrite(relayPin, HIGH); 
+  
+  setup_wifi(); 
+  
+  client.setServer(mqtt_server, mqtt_port);
+  
+  Serial.println("--- IOT SYSTEM READY ---");
+}
+
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+  client.loop(); 
+
+  int moistureValue = analogRead(sensorPin);
+  Serial.print("Moisture Level: ");
+  Serial.println(moistureValue);
+
+  char moistureString[8];
+  dtostrf(moistureValue, 1, 2, moistureString);
+  client.publish(topic_moisture, moistureString); 
+
+  if (moistureValue < dryThreshold) {
+    digitalWrite(relayPin, LOW);  
+    Serial.println("-> SOIL IS WET: PUMP [OFF]");
+    
+    client.publish(topic_pump_status, "OFF"); 
+    
+  } else {
+    digitalWrite(relayPin, HIGH); 
+    Serial.println("-> SOIL IS DRY: PUMP [ON]");
+    
+    client.publish(topic_pump_status, "ON");
+  }
+  
+  delay(1000); 
+}
